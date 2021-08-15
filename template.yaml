@@ -1,0 +1,511 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform:  'AWS::Serverless-2016-10-31'
+
+Description: >
+    resume-backend
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+    - Label:
+        default: "App Parameters"
+      Parameters:
+        - AppName
+        - DeployEnvironment
+        - DomainName
+
+    ParameterLabels:
+      AppName:
+        default: "Application Name"
+      DeployEnvironment:
+        default: "Environment Designation"
+      DomainName:
+        default: "Domain Name"
+
+Parameters:
+  DeployEnvironment:
+    Type: String
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+#    FunctionCurrentVersionAlias:
+#        Type: String
+#        Default: live
+  AppName:
+    Type: String
+  DomainName:
+    Type: String
+
+Mappings:
+    #
+    # For each allowed "DeployEnvironment" above different values are specified that can be used throughout the template
+    # DeploymentPreference values: https://github.com/awslabs/serverless-application-model/blob/master/docs/safe_lambda_deployments.rst
+    EnvironmentConfiguration:
+        dev:
+            FunctionDeploymentPreference: AllAtOnce
+            GatewayStageName: Dev
+            Subdomain: Unused
+            EnvHostedZoneNamePrefix: dev.
+        qa:
+            FunctionDeploymentPreference: AllAtOnce
+            GatewayStageName: QA
+            Subdomain: api.qa
+            EnvHostedZoneNamePrefix: qa.
+        prod:
+            FunctionDeploymentPreference: Canary10Percent5Minutes
+            GatewayStageName: Prod
+            Subdomain: api
+            EnvHostedZoneNamePrefix: ""
+
+Conditions:
+  IsProdEnvironment: !Equals [ !Ref DeployEnvironment, 'prod' ]
+  IsNotProdEnvironment: !Not [ !Equals [!Ref DeployEnvironment, 'prod']]
+
+Globals:
+    Function:
+        Timeout: 3
+
+Resources:
+
+# ! Visitors Lambda Resources
+# !
+
+  VisitCounterLambdaLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AppName}-${AWS::Region}"
+      RetentionInDays: 90
+
+  VisitCounterLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${AppName}-LambdaRole-${AWS::Region}
+      MaxSessionDuration: 36000
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub "${AppName}-LambdaExecutionPolicy-${AWS::Region}"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Sid: EnableCloudWatchMetricsAccess
+                Action:
+                  - 'cloudwatch:GetMetricStatistics'
+                  - 'cloudwatch:ListMetrics'
+                Effect: Allow
+                Resource: '*'
+              -
+                Sid: EnableCreateCloudWatchLogGroup
+                Action:
+                  - 'logs:CreateLogGroup'
+                Effect: Allow
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*
+              -
+                Sid: EnableCloudWatchLogAccess
+                Action:
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Effect: Allow
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AppName}-${AWS::Region}:*
+
+  LambdaDynamoDBAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "${AppName}-LambdaDDBPolicy-${AWS::Region}"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: Allow
+            Action:
+              - dynamodb:*
+            Resource:
+              - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AppName}Table
+      Roles:
+        - !Ref VisitCounterLambdaRole
+
+  VisitCounterLambdaPermission1:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Fn::GetAtt:
+          - VisitCounterLambda
+          - Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        !If [IsProdEnvironment, !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApi}/*/GET/counter', !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiGatewayRestApiDev}/*/GET/counter']
+
+
+  VisitCounterLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ${AppName}-${AWS::Region}
+      Handler: !Sub ${AppName}.lambda_handler
+      Role: !GetAtt VisitCounterLambdaRole.Arn
+      CodeUri: functions/siteVisitCounter
+      Runtime: python3.8
+      Environment:
+          Variables:
+              DDB_TABLE_NAME: !Sub ${AppName}Table
+
+# ! Visitors DynamoDB Resources
+# !
+
+  DynamoDBTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${AppName}Table
+      SSESpecification:
+        SSEEnabled: true
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        WriteCapacityUnits: 5
+        ReadCapacityUnits: 5
+      AttributeDefinitions:
+        - AttributeName: Site
+          AttributeType: S
+      KeySchema:
+        - KeyType: HASH
+          AttributeName: Site
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: customResourceDDBAccessRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+            - Effect: Allow
+              Action:
+              - dynamodb:*
+              Resource: "*"
+            - Effect: Allow
+              Action:
+              - logs:*
+              Resource: "*"
+
+  InitFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub ddbCI-${AWS::Region}
+      Handler: ddbCI.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      CodeUri: functions/ddbCI
+      Runtime: python3.8
+      Environment:
+          Variables:
+              DDB_TABLE_NAME: !Sub ${AppName}Table
+
+  InitializeDynamoDB:
+    Type: Custom::InitFunction
+    Properties:
+      ServiceToken:
+        Fn::GetAtt: [ InitFunction , "Arn" ]
+      DynamoTableName:
+        Ref: DynamoDBTable
+
+# ! API Gateway Resources
+# !
+
+  ApiGatewayRestApi:
+    Type: AWS::ApiGateway::RestApi
+    Condition: IsProdEnvironment
+    Properties:
+      ApiKeySourceType: HEADER
+      Description: API for counting visits to my site
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub ${AppName}API
+
+  ApiGatewayRestApiDev:
+    Type: AWS::ApiGateway::RestApi
+    Condition: IsNotProdEnvironment
+    Properties:
+      ApiKeySourceType: HEADER
+      Description: API for counting visits to my site
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Name: !Sub ${AppName}API
+      Policy:
+        Version: '2012-10-17'
+        Statement:
+            -
+                Effect: Allow
+                Principal: '*'
+                Action: 'execute-api:Invoke'
+                Resource: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/*/*'
+            -
+                Effect: Deny
+                Principal: '*'
+                Action: 'execute-api:Invoke'
+                Resource: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:*/*/*/*'
+                Condition:
+                    NotIpAddress:
+                        'aws:SourceIp':
+                          - "{{resolve:secretsmanager:myIPAddress:SecretString:ipaddress}}"
+
+  ApiDomainName:
+    Type: 'AWS::ApiGateway::DomainName'
+    Condition: IsProdEnvironment
+    Properties:
+      DomainName: !Join
+        - ""
+        - - "api."
+          - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, EnvHostedZoneNamePrefix]
+          - !Ref DomainName
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      RegionalCertificateArn: !Ref ACMCertificate
+
+  ApiGatewayBasePathMapping:
+    Type: 'AWS::ApiGateway::BasePathMapping'
+    Condition: IsProdEnvironment
+    Properties:
+      DomainName: !Ref ApiDomainName
+      RestApiId: !Ref ApiGatewayRestApi
+
+  ApiGatewayDns:
+    Type: AWS::Route53::RecordSetGroup
+    Condition: IsProdEnvironment
+    Properties:
+      HostedZoneId:
+        Fn::ImportValue: !Join
+          - ''
+          - - 'PublicHostedZoneId-'
+            - !Join
+              - ":"
+              - !Split
+                - '.'
+                - !Join
+                  - ''
+                  - - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, EnvHostedZoneNamePrefix]
+                    - !Ref DomainName
+      RecordSets:
+        - Name: !Join
+            - ""
+            - - "api."
+              - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, EnvHostedZoneNamePrefix]
+              - !Ref DomainName
+          Type: A
+          AliasTarget:
+            HostedZoneId: !GetAtt ApiDomainName.RegionalHostedZoneId
+            DNSName: !GetAtt ApiDomainName.RegionalDomainName
+
+  ApiDomainNameDev:
+    Type: 'AWS::ApiGateway::DomainName'
+    Condition: IsNotProdEnvironment
+    Properties:
+      DomainName: !Join
+        - ""
+        - - "api."
+          - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, EnvHostedZoneNamePrefix]
+          - !Ref DomainName
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      RegionalCertificateArn:
+        Fn::ImportValue: !Join
+          - ''
+          - - 'apiACMARN-'
+            - !Join
+              - ":"
+              - !Split
+                - '.'
+                - !Join
+                  - ''
+                  - - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, EnvHostedZoneNamePrefix]
+                    - !Ref DomainName
+
+  ApiGatewayBasePathMappingDev:
+    Type: 'AWS::ApiGateway::BasePathMapping'
+    Condition: IsNotProdEnvironment
+    Properties:
+      DomainName: !Ref ApiDomainNameDev
+      RestApiId: !Ref ApiGatewayRestApiDev
+
+  ApiGatewayDnsDev:
+    Type: AWS::Route53::RecordSetGroup
+    Condition: IsNotProdEnvironment
+    Properties:
+      HostedZoneId:
+        Fn::ImportValue: !Join
+          - ''
+          - - 'PublicHostedZoneId-'
+            - !Join
+              - ":"
+              - !Split
+                - '.'
+                - !Join
+                  - ''
+                  - - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, EnvHostedZoneNamePrefix]
+                    - !Ref DomainName
+      RecordSets:
+        - Name: !Join
+            - ""
+            - - "api."
+              - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, EnvHostedZoneNamePrefix]
+              - !Ref DomainName
+          Type: A
+          AliasTarget:
+            HostedZoneId: !GetAtt ApiDomainNameDev.RegionalHostedZoneId
+            DNSName: !GetAtt ApiDomainNameDev.RegionalDomainName
+
+  ACMCertificate:
+    Type: "AWS::CertificateManager::Certificate"
+    Condition: IsProdEnvironment
+    Properties:
+      DomainName: !Join
+        - ""
+        - - "api."
+          - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, EnvHostedZoneNamePrefix]
+          - !Ref DomainName
+      DomainValidationOptions:
+        - DomainName: !Join
+            - ""
+            - - "api."
+              - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, EnvHostedZoneNamePrefix]
+              - !Ref DomainName
+          HostedZoneId:
+            Fn::ImportValue: !Join
+              - ''
+              - - 'PublicHostedZoneId-'
+                - !Join
+                  - ":"
+                  - !Split
+                    - '.'
+                    - !Join
+                      - ''
+                      - - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, EnvHostedZoneNamePrefix]
+                        - !Ref DomainName
+      ValidationMethod: DNS
+
+  ApiGatewayUsage:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      ApiStages:
+        - ApiId: !If [IsProdEnvironment, !Ref ApiGatewayRestApi, !Ref ApiGatewayRestApiDev]
+          Stage: !Ref ApiGatewayStage
+      Description: Usage plan for this API
+      Quota:
+        Limit: 500
+        Period: MONTH
+      Throttle:
+        BurstLimit: 100
+        RateLimit: 50
+      UsagePlanName: !Sub '${AppName}API Usage Plan'
+
+  VisitCounterApiGatewayResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !If [IsProdEnvironment, !GetAtt ApiGatewayRestApi.RootResourceId, !GetAtt ApiGatewayRestApiDev.RootResourceId]
+      PathPart: 'counter'
+      RestApiId: !If [IsProdEnvironment, !Ref ApiGatewayRestApi, !Ref ApiGatewayRestApiDev]
+
+  VisitCounterApiGatewayGetMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ApiKeyRequired: False
+      AuthorizationType: NONE
+      HttpMethod: GET
+      Integration:
+        ConnectionType: INTERNET
+        IntegrationHttpMethod: POST
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: AWS
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${VisitCounterLambda.Arn}/invocations'
+        IntegrationResponses:
+          - ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            StatusCode: '200'
+      MethodResponses:
+        - ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: true
+          StatusCode: '200'
+          ResponseModels:
+            application/json: "Empty"
+      ResourceId: !Ref VisitCounterApiGatewayResource
+      RestApiId: !If [IsProdEnvironment, !Ref ApiGatewayRestApi, !Ref ApiGatewayRestApiDev]
+
+  VisitCounterApiGatewayOptionsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ResourceId: !Ref VisitCounterApiGatewayResource
+      RestApiId: !If [IsProdEnvironment, !Ref ApiGatewayRestApi, !Ref ApiGatewayRestApiDev]
+      ApiKeyRequired: False
+      AuthorizationType: NONE
+      HttpMethod: OPTIONS
+      Integration:
+        ConnectionType: INTERNET
+        PassthroughBehavior: WHEN_NO_MATCH
+        TimeoutInMillis: 29000
+        Type: MOCK
+        IntegrationResponses:
+          - StatusCode: '200'
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,OPTIONS,POST,PUT'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+      MethodResponses:
+        - StatusCode: '200'
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+          ResponseModels:
+            application/json: "Empty"
+
+  ApiGatewayStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      DeploymentId: !Ref ApiGatewayDeployment
+      Description: Lambda API Stage v0
+      RestApiId: !If [IsProdEnvironment, !Ref ApiGatewayRestApi, !Ref ApiGatewayRestApiDev]
+      StageName: !Ref DeployEnvironment
+
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - VisitCounterApiGatewayGetMethod
+      - VisitCounterApiGatewayOptionsMethod
+    Properties:
+      Description: Lambda API Deployment
+      RestApiId: !If [IsProdEnvironment, !Ref ApiGatewayRestApi, !Ref ApiGatewayRestApiDev]
+
+Outputs:
+  ApiURL:
+    Description: "API URL"
+    Value: !Join
+      - ''
+      - - !If [IsProdEnvironment, !Sub "https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/", !Sub "https://${ApiGatewayRestApiDev}.execute-api.${AWS::Region}.amazonaws.com/"]
+        - !FindInMap [EnvironmentConfiguration, !Ref DeployEnvironment, GatewayStageName]
+  AppName:
+    Description: "The name of the deployed application..."
+    Value: !Ref AppName
+  VisitCounterFunctionArn:
+    Value: !GetAtt VisitCounterLambda.Arn
+    Export:
+      Name: "VisitCounterLambdaArn"
