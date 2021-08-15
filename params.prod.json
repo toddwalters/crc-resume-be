@@ -1,0 +1,9 @@
+{
+  "Parameters": {
+    "DeployEnvironment": "prod",
+    "AppName": "siteVisitCounter",
+    "DomainName": "resume.waltodders.com"
+  },
+  "Tags": {},
+  "StackPolicy": {}
+}
