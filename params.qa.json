@@ -1,0 +1,9 @@
+{
+  "Parameters": {
+    "DeployEnvironment": "qa",
+    "AppName": "siteVisitCounter",
+    "DomainName": "resume.waltodders.com"
+  },
+  "Tags": {},
+  "StackPolicy": {}
+}
