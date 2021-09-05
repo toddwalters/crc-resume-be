@@ -126,7 +126,10 @@ Resources:
           -
             Effect: Allow
             Action:
-              - dynamodb:*
+              - dynamodb:GetItem
+              - dynamodb:Query
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
             Resource:
               - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AppName}Table
       Roles:
@@ -176,53 +179,6 @@ Resources:
       KeySchema:
         - KeyType: HASH
           AttributeName: Site
-
-  LambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-        - Effect: Allow
-          Principal:
-            Service:
-            - lambda.amazonaws.com
-          Action:
-          - sts:AssumeRole
-      Path: "/"
-      Policies:
-        - PolicyName: customResourceDDBAccessRole
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-            - Effect: Allow
-              Action:
-              - dynamodb:*
-              Resource: "*"
-            - Effect: Allow
-              Action:
-              - logs:*
-              Resource: "*"
-
-  InitFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: !Sub ddbCI-${AWS::Region}
-      Handler: ddbCI.lambda_handler
-      Role: !GetAtt LambdaRole.Arn
-      CodeUri: functions/ddbCI
-      Runtime: python3.8
-      Environment:
-          Variables:
-              DDB_TABLE_NAME: !Sub ${AppName}Table
-
-  InitializeDynamoDB:
-    Type: Custom::InitFunction
-    Properties:
-      ServiceToken:
-        Fn::GetAtt: [ InitFunction , "Arn" ]
-      DynamoTableName:
-        Ref: DynamoDBTable
 
 # ! API Gateway Resources
 # !
