@@ -31,6 +31,17 @@ def update_visit_counter(table):
         Key={
             'Site': 'myCRCSite'
         },
+        UpdateExpression="set VisitCount = if_not_exists(VisitCount, :val0)",
+        ExpressionAttributeValues={
+            ':val0': 0
+        },
+        ReturnValues='UPDATED_NEW'
+    )
+
+    updatedresponse = table.update_item(
+        Key={
+            'Site': 'myCRCSite'
+        },
         UpdateExpression="set VisitCount = VisitCount + :val1",
         ExpressionAttributeValues={
             ':val1': 1
