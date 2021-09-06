@@ -154,7 +154,7 @@ Resources:
       FunctionName: !Sub ${AppName}-${AWS::Region}
       Handler: !Sub ${AppName}.lambda_handler
       Role: !GetAtt VisitCounterLambdaRole.Arn
-      CodeUri: functions/siteVisitCounter
+      CodeUri: functions/site_visit_counter
       Runtime: python3.8
       Environment:
           Variables:

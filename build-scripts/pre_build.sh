@@ -32,7 +32,7 @@ check_python_code() {
     cd ${function_directory}
     if [ -f "requirements.txt" ]; then
       echo "  Linting ${function_directory}"
-      # pylint ${function_directory}
+      pylint ${function_directory}
       echo "  Testing ${function_directory}"
       # python -m pytest .
     fi

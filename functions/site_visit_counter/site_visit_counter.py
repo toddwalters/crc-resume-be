@@ -1,3 +1,7 @@
+'''
+Script to initialize and update DynamoDB Table item and item attribute
+used to track number of visitors to a site
+'''
 import logging
 import json
 import os
@@ -11,23 +15,24 @@ log.setLevel(LOG_LEVEL)
 DDB_TABLE_NAME = os.environ['DDB_TABLE_NAME']
 
 def lambda_handler(event, context):
-    log.info('Received event: {}'.format(json.dumps(event)))
+    '''lambda handler used to update dynamoDB visitor count table'''
+
+    log.info('%s', context)
+    log.info('Received event: %s', json.dumps(event))
 
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(DDB_TABLE_NAME)
 
-    log.info('Making call to update visit count table')
-
     try:
         response = update_visit_counter(table)
-    except ClientError as e:
-        print(e.response['Error']['Message'])
+    except ClientError as err:
+        print(err.response['Error']['Message'])
     else:
         return response
 
 
 def update_visit_counter(table):
-    log.info('Attempting to update visit counter table')
+    '''increment dynamo item counter attribute'''
 
     try:
         updatedresponse = table.update_item(
@@ -41,8 +46,8 @@ def update_visit_counter(table):
             ReturnValues='UPDATED_NEW'
         )
         log.info('Table Counter Attribute currently set to %s', updatedresponse)
-    except ClientError as e:
-        print(e.response['Error']['Message'])
+    except ClientError as err:
+        print(err.response['Error']['Message'])
     try:
         updatedresponse = table.update_item(
             Key={
@@ -55,13 +60,14 @@ def update_visit_counter(table):
             ReturnValues='UPDATED_NEW'
         )
         log.info('Table updated new counter value set to %s', updatedresponse)
-    except ClientError as e:
-        print(e.response['Error']['Message'])
+    except ClientError as err:
+        print(err.response['Error']['Message'])
     else:
         return updatedresponse
 
 
 def decrement_visit_counter(table):
+    '''decrement dynamo item counter attribute'''
     try:
         updatedresponse = table.update_item(
             Key={
@@ -73,7 +79,7 @@ def decrement_visit_counter(table):
             },
             ReturnValues='UPDATED_NEW'
         )
-    except ClientError as e:
-        print(e.response['Error']['Message'])
+    except ClientError as err:
+        print(err.response['Error']['Message'])
     else:
         return updatedresponse
