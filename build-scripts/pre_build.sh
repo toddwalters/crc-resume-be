@@ -34,7 +34,7 @@ check_python_code() {
       echo "  Linting ${function_directory}"
       pylint ${function_directory}
       echo "  Testing ${function_directory}"
-      # python -m pytest .
+      python -m pytest .
     fi
   done
 }

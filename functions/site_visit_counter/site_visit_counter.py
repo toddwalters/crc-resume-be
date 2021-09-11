@@ -1,5 +1,5 @@
 '''
-Script to initialize and update DynamoDB Table item and item attribute
+Lambda used  to initialize and/or update DynamoDB Tab:qle item and item attribute
 used to track number of visitors to a site
 '''
 import logging
@@ -9,16 +9,16 @@ import boto3
 from botocore.exceptions import ClientError
 
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'DEBUG')
-log = logging.getLogger(__name__)
-log.setLevel(LOG_LEVEL)
+LOG = logging.getLogger(__name__)
+LOG.setLevel(LOG_LEVEL)
 
-DDB_TABLE_NAME = os.environ['DDB_TABLE_NAME']
+DDB_TABLE_NAME = os.environ.get('DDB_TABLE_NAME')
 
 def lambda_handler(event, context):
     '''lambda handler used to update dynamoDB visitor count table'''
 
-    log.info('%s', context)
-    log.info('Received event: %s', json.dumps(event))
+    LOG.info('%s', context)
+    LOG.info('Received event: %s', json.dumps(event))
 
     dynamodb = boto3.resource('dynamodb')
     table = dynamodb.Table(DDB_TABLE_NAME)
@@ -45,7 +45,7 @@ def update_visit_counter(table):
             },
             ReturnValues='UPDATED_NEW'
         )
-        log.info('Table Counter Attribute currently set to %s', updatedresponse)
+        LOG.info('Table Counter Attribute currently set to %s', updatedresponse)
     except ClientError as err:
         print(err.response['Error']['Message'])
     try:
@@ -59,7 +59,7 @@ def update_visit_counter(table):
             },
             ReturnValues='UPDATED_NEW'
         )
-        log.info('Table updated new counter value set to %s', updatedresponse)
+        LOG.info('Table updated new counter value set to %s', updatedresponse)
     except ClientError as err:
         print(err.response['Error']['Message'])
     else:
