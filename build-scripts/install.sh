@@ -22,6 +22,9 @@ install_tools() {
   echo "Installing Python testing tool pytest"
   pip install pytest
 
+  echo "Installing Python testing tool mock"
+  pip install mock
+  
   echo "Installing Python Mock AWS Services package"
   pip install moto
 }
