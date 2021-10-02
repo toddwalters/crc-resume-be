@@ -29,6 +29,7 @@ def lambda_handler(event, context):
         print(err.response['Error']['Message'])
     else:
         return response
+    return None
 
 
 def update_visit_counter(table):
@@ -64,6 +65,7 @@ def update_visit_counter(table):
         print(err.response['Error']['Message'])
     else:
         return updatedresponse
+    return None
 
 
 def decrement_visit_counter(table):
@@ -83,3 +85,4 @@ def decrement_visit_counter(table):
         print(err.response['Error']['Message'])
     else:
         return updatedresponse
+    return None
