@@ -1,7 +1,7 @@
 {
   "Parameters": {
     "DeployEnvironment": "prod",
-    "AppName": "siteVisitCounter",
+    "AppName": "site_visit_counter",
     "DomainName": "resume.waltodders.com"
   },
   "Tags": {},
